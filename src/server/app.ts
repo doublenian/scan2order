@@ -59,6 +59,12 @@ export function createApp(ctx: AppContext): Express {
   api.use(createOrdersRouter(ctx));
   api.use(createAuthRouter(ctx));
 
+  // 未匹配的 /api/v1 路径应返回 404，而不是被管理端鉴权兜底为 401
+  api.use((req: Request, _res: Response, next: NextFunction) => {
+    if (!req.path.startsWith('/admin')) next('router');
+    else next();
+  });
+
   // 管理端：订单读写 Admin/Staff 均可；其余仅 Admin
   const staffOnly = express.Router();
   staffOnly.use(requireStaff(ctx));

@@ -26,7 +26,7 @@ export function createOrdersRouter(ctx: AppContext): Router {
   router.post('/orders', requireVisitor(ctx), validateBody(createOrderSchema), (req, res) => {
     const input = req.body as CreateOrderInput;
     const customerId = req.visitor!.id;
-    const orderId = db.transaction(() => createOrderTransaction(db, input, customerId))();
+    const orderId = db.transaction(() => createOrderTransaction(db, input, customerId)).immediate();
     success(res, getOrderDetail(db, orderId), 'created', 201);
   });
 

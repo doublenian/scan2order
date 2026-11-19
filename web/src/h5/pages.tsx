@@ -129,7 +129,8 @@ export function H5Error() {
 
 export function H5Menu() {
   const navigate = useNavigate();
-  const table = readTable();
+  // 只在首次挂载读取一次，避免每次渲染生成新对象导致 useEffect 无限触发请求循环
+  const [table] = useState(readTable);
   const [categories, setCategories] = useState<Category[]>([]);
   const [dishes, setDishes] = useState<Dish[]>([]);
   const [cart, setCart] = useState<CartLine[]>(loadCart);
@@ -148,7 +149,7 @@ export function H5Menu() {
       setCategories(cats.items);
       setDishes(dishPage.items);
     }).catch(show);
-  }, [navigate, table]);
+  }, [navigate]);
 
   const filtered = useMemo(
     () => dishes.filter((dish) => !keyword || dish.name.includes(keyword) || dish.description.includes(keyword)),
@@ -246,8 +247,10 @@ export function H5Menu() {
                 <DishRow key={dish.id} dish={dish} count={counts.get(dish.id) ?? 0}
                   onAdd={() => addSimple(dish)} onSpecs={(s) => addWithSpecs(dish, s)}
                   onChange={(delta) => {
-                    const line = cart.find((item) => item.dishId === dish.id);
-                    if (line) change(line, delta);
+                    // 同菜品可能存在多条规格行，减号应作用于最新加入的一行
+                    let last: CartLine | undefined;
+                    for (const item of cart) if (item.dishId === dish.id) last = item;
+                    if (last) change(last, delta);
                   }} />
               ))}
             </div>
@@ -286,18 +289,31 @@ function DishRow({ dish, count, onAdd, onSpecs, onChange }: {
 }) {
   const [picking, setPicking] = useState(false);
   const [selected, setSelected] = useState<Record<number, string>>({});
+  const [specError, setSpecError] = useState('');
   const soldout = dish.status === 'soldout';
 
   function confirmSpecs() {
     const result: Selection[] = [];
     for (const spec of dish.specs) {
       const optionId = selected[spec.id];
-      if (!optionId) continue;
+      if (!optionId) {
+        // 必选规格未选择时前端直接拦截，不打到后端
+        if (spec.required) {
+          setSpecError(`请选择${spec.name}`);
+          return;
+        }
+        continue;
+      }
       const option = spec.options.find((o) => o.id === optionId);
       if (option) result.push({ specId: spec.id, optionId, label: `${spec.name}:${option.label}`, extraPriceCents: option.extraPriceCents });
     }
     onSpecs(result);
     setPicking(false);
+  }
+
+  function openPicking() {
+    setSpecError('');
+    setPicking(true);
   }
 
   return (
@@ -315,10 +331,10 @@ function DishRow({ dish, count, onAdd, onSpecs, onChange }: {
           {soldout ? <button className="btn small gray" disabled>售罄</button> : count > 0 ? (
             <div className="stepper">
               <button onClick={() => onChange(-1)}>−</button><span>{count}</span>
-              <button className="plus" onClick={() => dish.specs.length ? setPicking(true) : onAdd()}>+</button>
+              <button className="plus" onClick={() => dish.specs.length ? openPicking() : onAdd()}>+</button>
             </div>
           ) : (
-            <button className="btn small" onClick={() => dish.specs.length ? setPicking(true) : onAdd()}>加购</button>
+            <button className="btn small" onClick={() => dish.specs.length ? openPicking() : onAdd()}>加购</button>
           )}
         </div>
       </div>
@@ -337,6 +353,7 @@ function DishRow({ dish, count, onAdd, onSpecs, onChange }: {
                 </select>
               </div>
             ))}
+            {specError && <p className="error-text">{specError}</p>}
             <button className="btn" style={{ width: '100%' }} onClick={confirmSpecs}>确认加入</button>
           </div>
         </div>

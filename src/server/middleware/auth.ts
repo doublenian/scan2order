@@ -66,7 +66,12 @@ export function requireStaff(ctx: AppContext): RequestHandler {
 }
 
 function resolveVisitor(ctx: AppContext, req: Request): VisitorIdentity {
-  const raw = req.get('X-Visitor-Token');
+  // 兼容三种传递方式：请求头 X-Visitor-Token、请求体 visitorToken（design.md 规定）。
+  const bodyToken = req.body && typeof req.body === 'object'
+    ? (req.body as Record<string, unknown>).visitorToken
+    : undefined;
+  const raw = req.get('X-Visitor-Token')
+    ?? (typeof bodyToken === 'string' && bodyToken.length > 0 ? bodyToken : undefined);
   if (!raw) throw unauthorized('缺少顾客凭证，请重新进入页面');
 
   const hash = hashVisitorToken(raw);
@@ -90,17 +95,29 @@ export function requireVisitor(ctx: AppContext): RequestHandler {
 }
 
 /**
- * 订单详情 / 支付：后台账号凭 JWT 可访问全部订单；顾客凭 X-Visitor-Token 仅可访问本人订单。
- * 只要携带了任一后台凭证（Cookie 或 Bearer）即按 JWT 校验，避免凭证无效时静默降级。
+ * 订单详情 / 支付：后台账号凭 JWT 可访问全部订单；顾客凭 X-Visitor-Token（或 body visitorToken）仅可访问本人订单。
+ * 携带了后台凭证时优先按 JWT 校验；若后台凭证失效但顾客凭证有效，回退按顾客身份处理（浏览器同域会自动携带 s2o_admin Cookie，不能因失效 Cookie 拒绝顾客）。
  */
 export function requireVisitorOrStaff(ctx: AppContext): RequestHandler {
   return (req: Request, _res: Response, next: NextFunction) => {
     try {
       if (extractJwt(req)) {
-        req.admin = verifyAdmin(ctx, req);
-      } else {
-        req.visitor = resolveVisitor(ctx, req);
+        try {
+          req.admin = verifyAdmin(ctx, req);
+          next();
+          return;
+        } catch (adminError) {
+          // 后台凭证存在但无效：尝试回退到顾客身份
+          try {
+            req.visitor = resolveVisitor(ctx, req);
+            next();
+            return;
+          } catch {
+            throw adminError;
+          }
+        }
       }
+      req.visitor = resolveVisitor(ctx, req);
       next();
     } catch (error) {
       next(error);
